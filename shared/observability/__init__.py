@@ -12,6 +12,8 @@ from shared.observability.alerts import (
 )
 from shared.observability.health import get_robot_health, get_system_health
 from shared.observability.metrics import get_metrics_snapshot
+from shared.observability.diagnostic_bundle import DiagnosticBundleBuilder
+from shared.observability.log_digest import build_log_digest, render_log_digest_markdown
 from shared.observability.process_logs import (
     ProcessLogCapture,
     ProcessLogCaptureError,
@@ -32,9 +34,11 @@ __all__ = [
     "Alert",
     "AlertRouter",
     "AlertRule",
+    "build_log_digest",
     "build_status_summary",
     "clear_alert_rules",
     "clear_status_providers",
+    "DiagnosticBundleBuilder",
     "emit_alert",
     "get_alert_router",
     "get_registered_alert_rules",
@@ -51,6 +55,7 @@ __all__ = [
     "ProcessStatus",
     "RetentionPolicy",
     "RetentionReport",
+    "render_log_digest_markdown",
     "sanitize_process_name",
     "unregister_status_provider",
     "unregister_alert_rule",

@@ -254,6 +254,73 @@ python3.10 scripts/ros/run_with_process_logs.py \
 
 The wrapper returns the child process exit code and prints the stdout/stderr log paths. It works with any command and does not require ROS to import, so it can be tested on a workstation without sourced ROS.
 
+## OBS-7/8 Diagnostic Bundles and Log Digests
+
+OBS-7/8 closes the shared diagnostics toolchain with two offline support utilities:
+
+- `shared.observability.diagnostic_bundle.DiagnosticBundleBuilder`
+- `shared.observability.log_digest`
+
+These tools are generic platform support infrastructure. They do not import apps, they do not require ROS or SDK installation, and they do not encode logistics or patrol workflow meaning.
+
+### Diagnostic Bundle
+
+The diagnostic bundle generator creates one sanitized zip file under `diagnostics/` containing:
+
+- sanitized copies of:
+  - `logs/app.log`
+  - `logs/app.jsonl`
+  - `logs/modules/*.jsonl`
+  - `logs/ros/*.log`
+  - `logs/ros/*.stdout.log`
+  - `logs/ros/*.stderr.log`
+- generated metadata files:
+  - `generated/status_summary.json`
+  - `generated/recent_diagnostics.json`
+  - `generated/recent_alerts.json`
+  - `generated/runtime_info.json`
+  - `generated/manifest.json`
+  - `generated/digest.md` when enabled
+
+The generator redacts token, password, secret, API key, authorization, bearer, private key, and credential values before writing bundle contents. It applies per-file and total-size controls so bundles stay small enough to share. It does not include `.env`, `config.local.yaml`, private keys, SSH keys, map files, raw scans, camera data, or arbitrary user-selected paths by default.
+
+Create a bundle:
+
+```bash
+python3.10 scripts/diagnostics/create_diagnostic_bundle.py --log-dir logs --output-dir diagnostics
+```
+
+### Log Digest
+
+The log digest reads structured diagnostics logs or a generated bundle and produces a compact summary of:
+
+- total structured events
+- counts by level, module, and error code
+- recent errors and critical events
+- process lifecycle events such as `process.started`, `process.exited`, and `process.failed`
+- top-level status summary information when available
+- warnings for malformed JSONL, truncated files, or missing logs
+
+The digest treats event names and error codes as opaque strings. It does not hardcode app workflow semantics.
+
+Print a digest from live logs:
+
+```bash
+python3.10 scripts/diagnostics/log_digest.py --log-dir logs
+```
+
+Read a digest from a bundle:
+
+```bash
+python3.10 scripts/diagnostics/log_digest.py --bundle diagnostics/diagnostic_bundle_YYYYmmdd_HHMMSS.zip
+```
+
+Write the digest to a file:
+
+```bash
+python3.10 scripts/diagnostics/log_digest.py --log-dir logs --output digest.md
+```
+
 ## Scope Limits
 
 OBS-1 defines the diagnostic event model and in-memory diagnostic ring buffer.

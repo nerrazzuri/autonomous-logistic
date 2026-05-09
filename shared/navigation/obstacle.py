@@ -7,35 +7,62 @@ import math
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
+from collections.abc import Callable
 
 from shared.core.event_bus import EventName, get_event_bus
 from shared.core.logger import get_logger
 from shared.diagnostics import DiagnosticReporter, error_codes, get_diagnostic_reporter
+from shared.lidar.contracts import LidarScanFrame
+from shared.lidar.laser_scan_converter import convert_laser_scan_to_frame
 
 
 logger = get_logger(__name__)
+ScanProvider = Callable[[], Any | None]
+_scan_provider: ScanProvider | None = None
+
+
+def _check_forward_arc_frame(frame: LidarScanFrame, stop_distance_m: float, arc_half_deg: float) -> bool:
+    arc_half_rad = math.radians(arc_half_deg)
+    for point in frame.points:
+        if not point.valid or point.range_m is None:
+            continue
+        if abs(point.angle_rad) <= arc_half_rad and point.range_m <= stop_distance_m:
+            return True
+    return False
+
+
+def _coerce_scan_to_frame(scan: Any) -> LidarScanFrame:
+    if isinstance(scan, LidarScanFrame):
+        return scan
+    try:
+        ranges = tuple(getattr(scan, "ranges"))
+    except TypeError as exc:
+        raise TypeError("scan.ranges must be iterable") from exc
+    return convert_laser_scan_to_frame(
+        robot_id=str(getattr(scan, "robot_id", "bridge_scan") or "bridge_scan"),
+        frame_id=str(
+            getattr(scan, "frame_id", "")
+            or getattr(getattr(scan, "header", None), "frame_id", "")
+            or "laser"
+        ),
+        timestamp_sec=float(getattr(scan, "timestamp_sec", 0.0)),
+        angle_min=float(scan.angle_min),
+        angle_max=float(
+            getattr(
+                scan,
+                "angle_max",
+                scan.angle_min + max(len(ranges) - 1, 0) * float(scan.angle_increment),
+            )
+        ),
+        angle_increment=float(scan.angle_increment),
+        range_min=float(getattr(scan, "range_min", 0.0)),
+        range_max=float(getattr(scan, "range_max", 0.0)),
+        ranges=ranges,
+    )
 
 
 def _check_forward_arc(scan: Any, stop_distance_m: float, arc_half_deg: float) -> bool:
-    arc_half_rad = math.radians(arc_half_deg)
-    range_min = float(getattr(scan, "range_min", 0.0))
-    range_max_raw = getattr(scan, "range_max", None)
-    range_max: float | None = (
-        float(range_max_raw) if range_max_raw is not None and float(range_max_raw) > 0 else None
-    )
-    angle_min = float(scan.angle_min)
-    angle_increment = float(scan.angle_increment)
-    for i, r in enumerate(scan.ranges):
-        if not math.isfinite(r) or r <= 0:
-            continue
-        if r < range_min:
-            continue
-        if range_max is not None and r > range_max:
-            continue
-        angle = angle_min + i * angle_increment
-        if abs(angle) <= arc_half_rad and r <= stop_distance_m:
-            return True
-    return False
+    return _check_forward_arc_frame(_coerce_scan_to_frame(scan), stop_distance_m, arc_half_deg)
 
 
 class ObstacleDetectorError(Exception):
@@ -108,6 +135,7 @@ class ObstacleDetector:
         stop_distance_m: float = 0.8,
         forward_arc_deg: float = 90.0,
         reporter: DiagnosticReporter | None = None,
+        scan_provider: ScanProvider | None = None,
     ) -> None:
         if (
             isinstance(polling_interval_seconds, bool)
@@ -127,6 +155,7 @@ class ObstacleDetector:
         self._poll_count = 0
         self._last_error: str | None = None
         self._diagnostic_reporter = reporter
+        self._scan_provider = scan_provider
         self._invalid_scan_reported = False
         self._poll_failure_reported = False
 
@@ -178,21 +207,19 @@ class ObstacleDetector:
         return self._last_error
 
     async def _detect_obstacle(self) -> ObstacleStatus:
+        scan_provider = self._scan_provider or _scan_provider
+        if scan_provider is None:
+            return ObstacleStatus.clear()
         try:
-            from shared.ros2 import get_bridge
+            scan = scan_provider()
         except Exception:
             return ObstacleStatus.clear()
-
-        bridge = get_bridge()
-        if bridge is None:
-            return ObstacleStatus.clear()
-
-        scan = bridge.get_latest_scan()
         if scan is None:
             return ObstacleStatus.clear()
 
         try:
-            if _check_forward_arc(scan, self._stop_distance_m, self._arc_half_deg):
+            frame = _coerce_scan_to_frame(scan)
+            if _check_forward_arc_frame(frame, self._stop_distance_m, self._arc_half_deg):
                 return ObstacleStatus.detected(source="m10_lidar", confidence=1.0)
             return ObstacleStatus.clear()
         except Exception as exc:
@@ -300,11 +327,19 @@ def get_obstacle_detector() -> ObstacleDetector:
     return obstacle_detector
 
 
+def set_obstacle_scan_provider(scan_provider: ScanProvider | None) -> None:
+    global _scan_provider
+    _scan_provider = scan_provider
+
+
 __all__ = [
     "ObstacleDetector",
     "ObstacleDetectorError",
     "ObstacleStatus",
     "_check_forward_arc",
+    "_check_forward_arc_frame",
+    "_coerce_scan_to_frame",
     "get_obstacle_detector",
     "obstacle_detector",
+    "set_obstacle_scan_provider",
 ]

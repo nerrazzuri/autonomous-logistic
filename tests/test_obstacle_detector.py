@@ -91,34 +91,28 @@ def test_check_forward_arc_detects_exactly_at_stop_distance():
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_detect_returns_clear_when_bridge_missing(monkeypatch):
-    import shared.ros2 as ros2_mod
+async def test_detect_returns_clear_when_bridge_missing():
     from shared.navigation.obstacle import ObstacleDetector
-    monkeypatch.setattr(ros2_mod, "_bridge", None)
     detector = ObstacleDetector()
     status = await detector._detect_obstacle()
     assert status.obstacle_present is False
 
 
 @pytest.mark.asyncio
-async def test_detect_returns_clear_when_scan_none(monkeypatch):
-    import shared.ros2 as ros2_mod
+async def test_detect_returns_clear_when_scan_none():
     from shared.navigation.obstacle import ObstacleDetector
-    monkeypatch.setattr(ros2_mod, "_bridge", FakeBridge(scan=None))
-    detector = ObstacleDetector()
+    detector = ObstacleDetector(scan_provider=lambda: None)
     status = await detector._detect_obstacle()
     assert status.obstacle_present is False
 
 
 @pytest.mark.asyncio
-async def test_detect_returns_detected_for_obstacle_in_arc(monkeypatch):
-    import shared.ros2 as ros2_mod
+async def test_detect_returns_detected_for_obstacle_in_arc():
     from shared.navigation.obstacle import ObstacleDetector
     # Index 90 → angle=0° (directly ahead), 0.5m within 0.8m stop distance
     ranges = [0.0] * 90 + [0.5] + [0.0] * 90
     scan = _make_scan(ranges=ranges, angle_min=-math.pi / 2)
-    monkeypatch.setattr(ros2_mod, "_bridge", FakeBridge(scan=scan))
-    detector = ObstacleDetector(stop_distance_m=0.8, forward_arc_deg=90.0)
+    detector = ObstacleDetector(stop_distance_m=0.8, forward_arc_deg=90.0, scan_provider=lambda: scan)
     status = await detector._detect_obstacle()
     assert status.obstacle_present is True
     assert status.source == "m10_lidar"
@@ -127,7 +121,6 @@ async def test_detect_returns_detected_for_obstacle_in_arc(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_poll_once_publishes_obstacle_transition_events(monkeypatch):
-    import shared.ros2 as ros2_mod
     import shared.navigation.obstacle as obstacle_module
     from shared.core.event_bus import EventName
     from shared.navigation.obstacle import ObstacleDetector
@@ -141,10 +134,9 @@ async def test_poll_once_publishes_obstacle_transition_events(monkeypatch):
     clear_ranges = [2.0] * 181
     obstacle_ranges = [2.0] * 90 + [0.5] + [2.0] * 90
     bridge = FakeBridge(scan=_make_scan(ranges=obstacle_ranges, angle_min=-math.pi / 2))
-    monkeypatch.setattr(ros2_mod, "_bridge", bridge)
     monkeypatch.setattr(obstacle_module, "get_event_bus", lambda: FakeEventBus(), raising=False)
 
-    detector = ObstacleDetector(stop_distance_m=0.8, forward_arc_deg=90.0)
+    detector = ObstacleDetector(stop_distance_m=0.8, forward_arc_deg=90.0, scan_provider=bridge.get_latest_scan)
     detected = await detector.poll_once()
 
     bridge._scan = _make_scan(ranges=clear_ranges, angle_min=-math.pi / 2)
@@ -161,12 +153,10 @@ async def test_poll_once_publishes_obstacle_transition_events(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_detect_returns_clear_for_invalid_scan_shape(monkeypatch):
-    import shared.ros2 as ros2_mod
+async def test_detect_returns_clear_for_invalid_scan_shape():
     from shared.navigation.obstacle import ObstacleDetector
     bad_scan = SimpleNamespace(ranges=None)  # iterating None raises TypeError
-    monkeypatch.setattr(ros2_mod, "_bridge", FakeBridge(scan=bad_scan))
-    detector = ObstacleDetector()
+    detector = ObstacleDetector(scan_provider=lambda: bad_scan)
     status = await detector._detect_obstacle()
     assert status.obstacle_present is False
 

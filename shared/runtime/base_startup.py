@@ -15,7 +15,7 @@ from shared.core.database import get_database
 from shared.core.event_bus import EventName, get_event_bus
 from shared.core.logger import get_logger, setup_logging
 from shared.core.robot_config import RobotConfig, RobotConfigError, RobotConfigLoader
-from shared.navigation.obstacle import get_obstacle_detector
+from shared.navigation.obstacle import get_obstacle_detector, set_obstacle_scan_provider
 from shared.navigation.navigator import Navigator
 from shared.navigation.route_store import get_route_store
 from shared.quadruped.heartbeat import HeartbeatController, get_heartbeat_controller
@@ -420,7 +420,11 @@ async def startup_system() -> None:
     if getattr(ros2_config, "enabled", False):
         from shared.ros2 import init_bridge
         init_bridge(ros2_config)
+        from shared.ros2 import get_bridge
+        set_obstacle_scan_provider(lambda: get_bridge().get_latest_scan() if get_bridge() is not None else None)
         logger.info("ROS2 bridge started", extra={"component": "ros2_bridge"})
+    else:
+        set_obstacle_scan_provider(None)
 
     config_path = _resolve_robot_config_path(config)
     logger.info("Shared platform startup begin", extra={"component": "startup", "robots_yaml_path": str(config_path)})
